@@ -1,0 +1,23 @@
+# Ignore specific directory
+my_directory_to_ignore/
+
+# Ignore virtual environments
+venv/
+env/
+.env/
+
+# Ignore Python compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Ignore dataset files (if applicable)
+datasets/
+data/
+
+# Ignore personal configuration files
+.idea/
+.vscode/
+
+# Ignore OS files
+.DS_Store
