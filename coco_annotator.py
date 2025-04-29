@@ -470,59 +470,63 @@ class CocoAnnotator:
         
         return os.path.join(annotations_dir, f"{base_name}.json")
     
-    def load_annotations(self):
-        """Try to load existing annotations for the current image"""
-        annotation_file = self.get_annotation_filename()
-        if not annotation_file or not os.path.exists(annotation_file):
-            return
-            
-        try:
-            with open(annotation_file, 'r') as f:
-                data = json.load(f)
-                
-            # Load keypoints
-            if 'keypoints' in data:
-                self.keypoints = []
-                for kp in data['keypoints']:
-                    keypoint = (kp['id'], kp['x'], kp['y'])
-                    self.keypoints.append(keypoint)
-                    self.draw_keypoint(keypoint)
-                self.update_keypoint_list()
-                
-            # Load curves
-            if 'curves' in data:
-                self.curves = []
-                for curve in data['curves']:
-                    curve_data = (curve['id'], [(p['x'], p['y']) for p in curve['points']])
-                    self.curves.append(curve_data)
-                    self.draw_curve(curve_data)
-                self.update_curve_list()
-                
-            # Load bounding boxes
-            if 'bboxes' in data:
-                self.bboxes = []
-                for bbox in data['bboxes']:
-                    bbox_data = (bbox['id'], bbox['x1'], bbox['y1'], bbox['x2'], bbox['y2'])
-                    self.bboxes.append(bbox_data)
-                    self.draw_bbox(bbox_data)
-                self.update_bbox_list()
-                
-            self.update_status(f"Loaded annotations for {os.path.basename(self.images[self.current_image_index])}")
-            
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to load annotations: {str(e)}")
-    
+
     def save_annotations(self):
         """Save annotations for the current image"""
         if self.current_image_index < 0 or not self.images:
             messagebox.showinfo("Info", "No image loaded")
             return
-            
+        
+        # Load original image to get true dimensions
+        original_img_path = self.images[self.current_image_index]
+        original_image = Image.open(original_img_path)
+        orig_width, orig_height = original_image.size
+        
+        # Current display dimensions
+        display_width, display_height = self.current_image_data.width, self.current_image_data.height
+        
+        # Create normalized annotations
+        normalized_keypoints = []
+        for kp in self.keypoints:
+            kp_id, x, y = kp
+            # Convert to normalized coordinates (0-1 range)
+            norm_x = x / display_width
+            norm_y = y / display_height
+            normalized_keypoints.append({'id': kp_id, 'x': norm_x, 'y': norm_y})
+        
+        normalized_curves = []
+        for curve in self.curves:
+            curve_id, points = curve
+            normalized_points = []
+            for x, y in points:
+                norm_x = x / display_width
+                norm_y = y / display_height
+                normalized_points.append({'x': norm_x, 'y': norm_y})
+            normalized_curves.append({'id': curve_id, 'points': normalized_points})
+        
+        normalized_bboxes = []
+        for bbox in self.bboxes:
+            bbox_id, x1, y1, x2, y2 = bbox
+            norm_x1 = x1 / display_width
+            norm_y1 = y1 / display_height
+            norm_x2 = x2 / display_width
+            norm_y2 = y2 / display_height
+            normalized_bboxes.append({
+                'id': bbox_id, 
+                'x1': norm_x1, 
+                'y1': norm_y1, 
+                'x2': norm_x2, 
+                'y2': norm_y2
+            })
+        
+        # Store both normalized coordinates and original image dimensions
         annotation_data = {
             'image': os.path.basename(self.images[self.current_image_index]),
-            'keypoints': [{'id': kp[0], 'x': kp[1], 'y': kp[2]} for kp in self.keypoints],
-            'curves': [{'id': c[0], 'points': [{'x': p[0], 'y': p[1]} for p in c[1]]} for c in self.curves],
-            'bboxes': [{'id': bb[0], 'x1': bb[1], 'y1': bb[2], 'x2': bb[3], 'y2': bb[4]} for bb in self.bboxes]
+            'image_width': orig_width,
+            'image_height': orig_height,
+            'keypoints': normalized_keypoints,
+            'curves': normalized_curves,
+            'bboxes': normalized_bboxes
         }
         
         annotation_file = self.get_annotation_filename()
@@ -537,6 +541,7 @@ class CocoAnnotator:
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save annotations: {str(e)}")
+
     
     def prompt_save_annotations(self):
         """Prompt user to save annotations before switching images"""
@@ -548,6 +553,66 @@ class CocoAnnotator:
     def update_status(self, message):
         """Update the status bar message"""
         self.status_bar.config(text=message)
+
+
+    def load_annotations(self):
+        """Try to load existing annotations for the current image"""
+        annotation_file = self.get_annotation_filename()
+        if not annotation_file or not os.path.exists(annotation_file):
+            return
+            
+        try:
+            with open(annotation_file, 'r') as f:
+                data = json.load(f)
+            
+            # Get current display dimensions
+            display_width = self.current_image_data.width
+            display_height = self.current_image_data.height
+                
+            # Load keypoints - convert from normalized to display coordinates
+            if 'keypoints' in data:
+                self.keypoints = []
+                for kp in data['keypoints']:
+                    # Convert normalized coordinates to pixel coordinates for current display
+                    x = int(kp['x'] * display_width)
+                    y = int(kp['y'] * display_height)
+                    keypoint = (kp['id'], x, y)
+                    self.keypoints.append(keypoint)
+                    self.draw_keypoint(keypoint)
+                self.update_keypoint_list()
+                
+            # Load curves - convert from normalized to display coordinates
+            if 'curves' in data:
+                self.curves = []
+                for curve in data['curves']:
+                    points = []
+                    for p in curve['points']:
+                        # Convert normalized coordinates to pixel coordinates
+                        x = int(p['x'] * display_width)
+                        y = int(p['y'] * display_height)
+                        points.append((x, y))
+                    curve_data = (curve['id'], points)
+                    self.curves.append(curve_data)
+                    self.draw_curve(curve_data)
+                self.update_curve_list()
+                
+            # Load bounding boxes - convert from normalized to display coordinates
+            if 'bboxes' in data:
+                self.bboxes = []
+                for bbox in data['bboxes']:
+                    x1 = int(bbox['x1'] * display_width)
+                    y1 = int(bbox['y1'] * display_height)
+                    x2 = int(bbox['x2'] * display_width)
+                    y2 = int(bbox['y2'] * display_height)
+                    bbox_data = (bbox['id'], x1, y1, x2, y2)
+                    self.bboxes.append(bbox_data)
+                    self.draw_bbox(bbox_data)
+                self.update_bbox_list()
+                
+            self.update_status(f"Loaded annotations for {os.path.basename(self.images[self.current_image_index])}")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load annotations: {str(e)}")
 
 def main():
     root = tk.Tk()
