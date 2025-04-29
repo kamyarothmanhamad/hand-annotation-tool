@@ -81,10 +81,16 @@ class CocoAnnotator:
         # Save button
         save_btn = ttk.Button(control_frame, text="Save Annotations", command=self.save_annotations)
         save_btn.pack(side=tk.RIGHT, padx=5)
+
+        # YOLO export button
+        export_yolo_btn = ttk.Button(control_frame, text="Export YOLO Format", command=self.export_yolo_format)
+        export_yolo_btn.pack(side=tk.RIGHT, padx=5)
         
         # Canvas for image display and annotation
         canvas_frame = ttk.Frame(main_frame)
         canvas_frame.pack(fill=tk.BOTH, expand=True, pady=10)
+        batch_export_btn = ttk.Button(control_frame, text="Batch YOLO Export", command=self.export_all_to_yolo)
+        batch_export_btn.pack(side=tk.RIGHT, padx=5)
         
         self.canvas = tk.Canvas(canvas_frame, bg="gray", cursor="cross")
         self.canvas.pack(fill=tk.BOTH, expand=True)
@@ -613,6 +619,128 @@ class CocoAnnotator:
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load annotations: {str(e)}")
+
+
+    def convert_to_yolo_format(self):
+        """Convert bounding boxes to normalized center format (YOLO style)"""
+        if not self.current_image_data or not self.bboxes:
+            return []
+            
+        display_width, display_height = self.current_image_data.width, self.current_image_data.height
+        yolo_bboxes = []
+        
+        for bbox_id, x1, y1, x2, y2 in self.bboxes:
+            # Calculate center points and dimensions (normalized)
+            x_center = (x1 + x2) / (2 * display_width)
+            y_center = (y1 + y2) / (2 * display_height)
+            width = (x2 - x1) / display_width
+            height = (y2 - y1) / display_height
+            
+            yolo_bboxes.append({
+                'id': bbox_id,
+                'x_c': x_center,
+                'y_c': y_center,
+                'w': width,
+                'h': height
+            })
+            
+        return yolo_bboxes
+    
+        
+    def export_yolo_format(self):
+        """Export annotations in YOLO format"""
+        if self.current_image_index < 0 or not self.images or not self.bboxes:
+            messagebox.showinfo("Info", "No bounding boxes to export")
+            return
+        
+        # Create YOLO export directory if it doesn't exist
+        yolo_dir = os.path.join(self.dataset_path, "yolo_annotations")
+        os.makedirs(yolo_dir, exist_ok=True)
+        
+        # Get filename without extension
+        img_path = self.images[self.current_image_index]
+        img_name = os.path.basename(img_path)
+        base_name = os.path.splitext(img_name)[0]
+        yolo_file = os.path.join(yolo_dir, f"{base_name}.txt")
+        
+        # Convert bboxes to YOLO format
+        yolo_bboxes = self.convert_to_yolo_format()
+        
+        try:
+            with open(yolo_file, 'w') as f:
+                # Standard YOLO format: class_id center_x center_y width height
+                # For simplicity, using bbox_id as class_id
+                for bbox in yolo_bboxes:
+                    f.write(f"0 {bbox['x_c']:.6f} {bbox['y_c']:.6f} {bbox['w']:.6f} {bbox['h']:.6f}\n")
+                    
+            self.update_status(f"Exported YOLO format to {os.path.basename(yolo_file)}")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to export YOLO format: {str(e)}")
+
+
+    def export_all_to_yolo(self):
+        """Export all annotations in the dataset to YOLO format"""
+        if not self.dataset_path or not self.images:
+            messagebox.showinfo("Info", "No dataset loaded")
+            return
+            
+        # Create YOLO export directory
+        yolo_dir = os.path.join(self.dataset_path, "yolo_annotations")
+        os.makedirs(yolo_dir, exist_ok=True)
+        
+        # Remember current image index to restore it later
+        current_idx = self.current_image_index
+        exported_count = 0
+        
+        # Show progress
+        progress = tk.Toplevel(self.root)
+        progress.title("Exporting to YOLO format")
+        progress.geometry("300x100")
+        progress_label = ttk.Label(progress, text="Exporting annotations...")
+        progress_label.pack(pady=10)
+        progress_bar = ttk.Progressbar(progress, length=250)
+        progress_bar.pack(pady=10)
+        progress_bar["maximum"] = len(self.images)
+        
+        # Process each image
+        for idx, img_path in enumerate(self.images):
+            # Update progress
+            progress_bar["value"] = idx + 1
+            progress.update()
+            
+            # Load image and its annotations
+            self.current_image_index = idx
+            self.load_image()
+            
+            # Only export if there are bounding boxes
+            if self.bboxes:
+                img_name = os.path.basename(img_path)
+                base_name = os.path.splitext(img_name)[0]
+                yolo_file = os.path.join(yolo_dir, f"{base_name}.txt")
+                
+                # Convert and save
+                yolo_bboxes = self.convert_to_yolo_format()
+                try:
+                    with open(yolo_file, 'w') as f:
+                        for bbox in yolo_bboxes:
+                            f.write(f"0 {bbox['x_c']:.6f} {bbox['y_c']:.6f} {bbox['w']:.6f} {bbox['h']:.6f}\n")
+                    exported_count += 1
+                except Exception:
+                    continue
+        
+        # Restore original image
+        self.current_image_index = current_idx
+        self.load_image()
+        
+        # Close progress dialog
+        progress.destroy()
+        
+        # Show completion message
+        messagebox.showinfo("Export Complete", f"Exported {exported_count} annotations to YOLO format")
+
+
+
 
 def main():
     root = tk.Tk()
