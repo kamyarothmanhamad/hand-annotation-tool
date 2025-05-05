@@ -10,6 +10,7 @@ class AnnotationMode(Enum):
     KEYPOINT = 1
     CURVE = 2
     BBOX = 3
+    FREEHAND = 4  # New freehand drawing mode
 
 class CocoAnnotator:
     def __init__(self, root):
@@ -28,10 +29,12 @@ class CocoAnnotator:
         self.drawing = False
         self.curve_points = []
         self.bbox_start = None
+        self.freehand_points = []  # For storing freehand drawing points
         
         self.keypoints = []
         self.curves = []
         self.bboxes = []
+        self.freehand_curves = []  # For storing completed freehand curves
         
         self.setup_ui()
     
@@ -78,6 +81,11 @@ class CocoAnnotator:
                                   value="bbox", command=self.set_annotation_mode)
         bbox_rb.pack(side=tk.LEFT, padx=5)
         
+        # Add freehand drawing mode option
+        freehand_rb = ttk.Radiobutton(mode_frame, text="Freehand", variable=self.mode_var,
+                                     value="freehand", command=self.set_annotation_mode)
+        freehand_rb.pack(side=tk.LEFT, padx=5)
+        
         # Save button
         save_btn = ttk.Button(control_frame, text="Save Annotations", command=self.save_annotations)
         save_btn.pack(side=tk.RIGHT, padx=5)
@@ -85,6 +93,18 @@ class CocoAnnotator:
         # YOLO export button
         export_yolo_btn = ttk.Button(control_frame, text="Export YOLO Format", command=self.export_yolo_format)
         export_yolo_btn.pack(side=tk.RIGHT, padx=5)
+        
+        # Add smoothing control for freehand drawing
+        self.smoothing_frame = ttk.LabelFrame(control_frame, text="Curve Smoothing")
+        self.smoothing_frame.pack(side=tk.LEFT, padx=20)
+        
+        self.smooth_iterations_var = tk.IntVar(value=2)
+        smooth_label = ttk.Label(self.smoothing_frame, text="Smooth Iterations:")
+        smooth_label.pack(side=tk.LEFT, padx=5)
+        
+        smooth_spinbox = ttk.Spinbox(self.smoothing_frame, from_=0, to=5, 
+                                   textvariable=self.smooth_iterations_var, width=5)
+        smooth_spinbox.pack(side=tk.LEFT, padx=5)
         
         # Canvas for image display and annotation
         canvas_frame = ttk.Frame(main_frame)
@@ -176,6 +196,26 @@ class CocoAnnotator:
                                     command=lambda: self.delete_annotation("bbox"))
         delete_bbox_btn.pack(pady=5)
         
+        # Add Freehand Curves Tab
+        freehand_tab = ttk.Frame(self.annotation_tabs)
+        self.annotation_tabs.add(freehand_tab, text="Freehand Curves")
+        
+        self.freehand_tree = ttk.Treeview(freehand_tab, columns=("id", "points"), 
+                                      show="headings", selectmode="browse")
+        self.freehand_tree.heading("id", text="ID")
+        self.freehand_tree.heading("points", text="Points")
+        self.freehand_tree.column("id", width=50)
+        self.freehand_tree.column("points", width=250)
+        self.freehand_tree.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
+        
+        freehand_scrollbar = ttk.Scrollbar(freehand_tab, orient=tk.VERTICAL, command=self.freehand_tree.yview)
+        freehand_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.freehand_tree.configure(yscrollcommand=freehand_scrollbar.set)
+        
+        delete_freehand_btn = ttk.Button(freehand_tab, text="Delete Selected", 
+                                     command=lambda: self.delete_annotation("freehand"))
+        delete_freehand_btn.pack(pady=5)
+        
         # Status bar
         self.status_bar = ttk.Label(self.root, text="Ready", relief=tk.SUNKEN, anchor=tk.W)
         self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
@@ -217,6 +257,7 @@ class CocoAnnotator:
         self.keypoints = []
         self.curves = []
         self.bboxes = []
+        self.freehand_curves = []
         self.clear_annotation_lists()
         
         # Load image
@@ -271,6 +312,8 @@ class CocoAnnotator:
             self.annotation_mode = AnnotationMode.CURVE
         elif mode == "bbox":
             self.annotation_mode = AnnotationMode.BBOX
+        elif mode == "freehand":
+            self.annotation_mode = AnnotationMode.FREEHAND
         
         self.update_status(f"Annotation mode: {mode}")
     
@@ -309,20 +352,59 @@ class CocoAnnotator:
             self.drawing = True
             self.bbox_start = (x, y)
             
+        elif self.annotation_mode == AnnotationMode.FREEHAND:
+            # Start freehand drawing
+            self.drawing = True
+            self.freehand_points = [(x, y)]
+            self.canvas.delete("temp_freehand")  # Clear any previous temporary drawing
+    
+    # def on_canvas_drag(self, event):
+    #     """Handle mouse drag on the canvas"""
+    #     if not self.drawing or self.current_image is None:
+    #         return
+        
+    #     x, y = event.x, event.y
+        
+    #     if self.annotation_mode == AnnotationMode.BBOX and self.bbox_start:
+    #         # Update bounding box preview
+    #         self.canvas.delete("temp_bbox")
+    #         self.canvas.create_rectangle(
+    #             self.bbox_start[0], self.bbox_start[1], x, y,
+    #             outline="red", width=2, dash=(5, 5), tags="temp_bbox"
+    #         )
+        
+    #     elif self.annotation_mode == AnnotationMode.FREEHAND:
+    #         # Add point to freehand drawing and update display
+    #         self.freehand_points.append((x, y))
+            
+    #         # Only draw the new line segment
+    #         if len(self.freehand_points) > 1:
+    #             p1 = self.freehand_points[-2]
+    #             p2 = (x, y)
+    #             self.canvas.create_line(p1[0], p1[1], p2[0], p2[1], 
+    #                                   fill="purple", width=2, tags="temp_freehand")
+
     def on_canvas_drag(self, event):
-        """Handle mouse drag on the canvas"""
-        if not self.drawing or self.current_image is None:
+        if not self.drawing or self.current_image is None or self.annotation_mode != AnnotationMode.FREEHAND:
             return
         
         x, y = event.x, event.y
         
-        if self.annotation_mode == AnnotationMode.BBOX and self.bbox_start:
-            # Update bounding box preview
-            self.canvas.delete("temp_bbox")
-            self.canvas.create_rectangle(
-                self.bbox_start[0], self.bbox_start[1], x, y,
-                outline="red", width=2, dash=(5, 5), tags="temp_bbox"
-            )
+        # Only add point if it's at least N pixels away from last point
+        if self.freehand_points:
+            last_x, last_y = self.freehand_points[-1]
+            distance = ((x - last_x)**2 + (y - last_y)**2)**0.5
+            if distance < 5:  # Minimum distance threshold
+                return
+        
+        self.freehand_points.append((x, y))
+        
+        # Only draw the new line segment
+        if len(self.freehand_points) > 1:
+            p1 = self.freehand_points[-2]
+            p2 = (x, y)
+            self.canvas.create_line(p1[0], p1[1], p2[0], p2[1], 
+                                fill="purple", width=2, tags="temp_freehand")
     
     def on_canvas_release(self, event):
         """Handle mouse release on the canvas"""
@@ -363,6 +445,71 @@ class CocoAnnotator:
                 self.update_bbox_list()
             
             self.bbox_start = None
+            
+        elif self.annotation_mode == AnnotationMode.FREEHAND:
+            # Finish freehand drawing
+            self.drawing = False
+            
+            # Only process if we have enough points
+            if len(self.freehand_points) > 2:
+                self.canvas.delete("temp_freehand")
+                
+                # Apply Chaikin's corner cutting algorithm for smoothing
+                smoothed_points = self.apply_bspline_smoothing(
+                    self.freehand_points, 
+                    self.smooth_iterations_var.get()
+                )
+                
+                # Save the smoothed curve
+                curve_id = len(self.freehand_curves) + 1
+                self.freehand_curves.append((curve_id, smoothed_points))
+                
+                # Draw the final smooth curve
+                self.draw_freehand_curve((curve_id, smoothed_points))
+                
+                # Update the freehand curves list
+                self.update_freehand_list()
+            
+            self.freehand_points = []
+
+    def apply_bspline_smoothing(self, points, degree=3):
+        """Apply B-spline interpolation for smoother curves"""
+        if len(points) < degree + 1:
+            return points
+        
+        try:
+            import scipy.interpolate as interpolate
+            import numpy as np
+            
+            # Convert points to numpy arrays
+            points_array = np.array(points)
+            x = points_array[:, 0]
+            y = points_array[:, 1]
+            
+            # Parameter t based on cumulative distance
+            t = np.zeros(len(points))
+            for i in range(1, len(points)):
+                dx = points[i][0] - points[i-1][0]
+                dy = points[i][1] - points[i-1][1]
+                t[i] = t[i-1] + (dx**2 + dy**2)**0.5
+            
+            # Normalize t to [0, 1]
+            if t[-1] > 0:
+                t = t / t[-1]
+            
+            # Create a B-spline representation
+            tck, _ = interpolate.splprep([x, y], s=0, k=min(degree, len(points)-1))
+            
+            # Evaluate the spline at more points for smoothness
+            num_points = max(len(points) * 2, 50)
+            u_new = np.linspace(0, 1, num_points)
+            x_new, y_new = interpolate.splev(u_new, tck)
+            
+            # Convert back to list of tuples
+            return [(int(x_new[i]), int(y_new[i])) for i in range(len(x_new))]
+        except ImportError:
+            # Fallback to Chaikin if scipy is not available
+            return self.apply_chaikin_smoothing(points, iterations=3)
     
     def draw_keypoint(self, keypoint):
         """Draw a keypoint on the canvas"""
@@ -401,6 +548,36 @@ class CocoAnnotator:
         self.canvas.create_rectangle(x1, y1, x2, y2, outline="blue", width=2, tags=tag)
         self.canvas.create_text(x1, y1-10, text=str(bbox_id), tags=tag, anchor="w")
     
+    def draw_freehand_curve(self, curve):
+        """Draw a freehand curve with improved rendering"""
+        curve_id, points = curve
+        tag = f"freehand_{curve_id}"
+        
+        if len(points) < 2:
+            return
+        
+        # Draw a smooth curve using canvas create_line with smooth option
+        if len(points) > 2:
+            # Flatten the points for tkinter canvas
+            flat_points = []
+            for point in points:
+                flat_points.extend(point)
+            
+            self.canvas.create_line(flat_points, 
+                                   fill="purple", width=2, 
+                                   smooth=True,  # Use spline smoothing
+                                   tags=tag)
+        else:
+            # Fallback to simple line for 2 points
+            p1, p2 = points
+            self.canvas.create_line(p1[0], p1[1], p2[0], p2[1], 
+                                  fill="purple", width=2, tags=tag)
+        
+        # Draw curve ID
+        if points:
+            self.canvas.create_text(points[0][0], points[0][1]-15, 
+                                  text=f"F{curve_id}", tags=tag)
+    
     def update_keypoint_list(self):
         """Update the keypoints in the treeview"""
         self.keypoints_tree.delete(*self.keypoints_tree.get_children())
@@ -423,11 +600,20 @@ class CocoAnnotator:
             bbox_id, x1, y1, x2, y2 = bbox
             self.bbox_tree.insert("", "end", values=(bbox_id, x1, y1, x2, y2))
     
+    def update_freehand_list(self):
+        """Update the freehand curves in the treeview"""
+        self.freehand_tree.delete(*self.freehand_tree.get_children())
+        for curve in self.freehand_curves:
+            curve_id, points = curve
+            points_str = f"{len(points)} points"
+            self.freehand_tree.insert("", "end", values=(curve_id, points_str))
+    
     def clear_annotation_lists(self):
         """Clear all annotation lists"""
         self.keypoints_tree.delete(*self.keypoints_tree.get_children())
         self.curves_tree.delete(*self.curves_tree.get_children())
         self.bbox_tree.delete(*self.bbox_tree.get_children())
+        self.freehand_tree.delete(*self.freehand_tree.get_children())
     
     def delete_annotation(self, annotation_type):
         """Delete the selected annotation"""
@@ -460,6 +646,16 @@ class CocoAnnotator:
                     self.canvas.delete(f"bbox_{bbox_id}")
                     del self.bboxes[idx]
                     self.update_bbox_list()
+                    
+        elif annotation_type == "freehand":
+            selected = self.freehand_tree.selection()
+            if selected:
+                idx = self.freehand_tree.index(selected[0])
+                if 0 <= idx < len(self.freehand_curves):
+                    curve_id = self.freehand_curves[idx][0]
+                    self.canvas.delete(f"freehand_{curve_id}")
+                    del self.freehand_curves[idx]
+                    self.update_freehand_list()
     
     def get_annotation_filename(self):
         """Get the annotation filename for the current image"""
@@ -525,6 +721,17 @@ class CocoAnnotator:
                 'y2': norm_y2
             })
         
+        # Add normalized freehand curves
+        normalized_freehand = []
+        for curve in self.freehand_curves:
+            curve_id, points = curve
+            normalized_points = []
+            for x, y in points:
+                norm_x = x / display_width
+                norm_y = y / display_height
+                normalized_points.append({'x': norm_x, 'y': norm_y})
+            normalized_freehand.append({'id': curve_id, 'points': normalized_points})
+        
         # Store both normalized coordinates and original image dimensions
         annotation_data = {
             'image': os.path.basename(self.images[self.current_image_index]),
@@ -532,7 +739,8 @@ class CocoAnnotator:
             'image_height': orig_height,
             'keypoints': normalized_keypoints,
             'curves': normalized_curves,
-            'bboxes': normalized_bboxes
+            'bboxes': normalized_bboxes,
+            'freehand_curves': normalized_freehand
         }
         
         annotation_file = self.get_annotation_filename()
@@ -551,7 +759,7 @@ class CocoAnnotator:
     
     def prompt_save_annotations(self):
         """Prompt user to save annotations before switching images"""
-        if self.keypoints or self.curves or self.bboxes:
+        if self.keypoints or self.curves or self.bboxes or self.freehand_curves:
             if messagebox.askyesno("Save Annotations", 
                                   "Do you want to save the current annotations before continuing?"):
                 self.save_annotations()
@@ -614,6 +822,21 @@ class CocoAnnotator:
                     self.bboxes.append(bbox_data)
                     self.draw_bbox(bbox_data)
                 self.update_bbox_list()
+                
+            # Load freehand curves - convert from normalized to display coordinates
+            if 'freehand_curves' in data:
+                self.freehand_curves = []
+                for curve in data['freehand_curves']:
+                    points = []
+                    for p in curve['points']:
+                        # Convert normalized coordinates to pixel coordinates
+                        x = int(p['x'] * display_width)
+                        y = int(p['y'] * display_height)
+                        points.append((x, y))
+                    curve_data = (curve['id'], points)
+                    self.freehand_curves.append(curve_data)
+                    self.draw_freehand_curve(curve_data)
+                self.update_freehand_list()
                 
             self.update_status(f"Loaded annotations for {os.path.basename(self.images[self.current_image_index])}")
             
