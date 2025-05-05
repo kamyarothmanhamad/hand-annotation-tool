@@ -64,4 +64,4 @@ Annotations are saved in a JSON file with the following structure:
 
 ## License
 
-MIT
+
